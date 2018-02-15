@@ -1,0 +1,267 @@
+---
+title: "Airport Network"
+author: "Debanjan Basu"
+output:
+  html_notebook: default
+  html_document: default
+---
+
+#Graph theory
+## Introduction
+ - graphs are a collection of nodes/vertices and edges/connection between them
+ - graph theory in mathematics 
+     + how does connectivity in a network affect behaviour?
+ - what kind of behaviour is desirable?
+
+#Desirable features
+## design better networks 
+ 
+ - transport network: 
+     + **design**: well-connected, low construction cost, short path lengths
+     + **tolerance**: robust against attack,stop pandemics 
+ - protein network: 
+     + **design**:  phenotype expression, tunability for bioengineering
+     + **tolerance**: resistant to genetic mutations
+
+#World Airport Network
+##data sources 
+
+ - data obtained from [openflights.org](https://openflights.org/data.html)
+ - import data identifying airports
+```{r}
+require(data.table)
+require(curl)
+URL<-"https://raw.githubusercontent.com/jpatokal/openflights/master/data/airports.dat"
+airports<-fread(URL,na.strings =c("","\\N"),data.table = TRUE)
+colnames(airports)<-c("ID","AirportName","City","Country","IATA","ICAO","Latitude","Longitude","Altitude","Timezone","DST","TZ","Type","Source")
+print(airports)
+```
+ - similarly import data identifying routes
+```{r}
+library(data.table)
+library(curl)
+URL<-"https://raw.githubusercontent.com/jpatokal/openflights/master/data/routes.dat"
+colnames<- c("Airline","AirlineID","SourceAirport",
+              "SourceAirportID","DestinationAirport",
+              "DestinationAirportID","Codeshare","Stops","Equipment" )
+routes<-fread(URL,na.strings =c("","\\N"),data.table = TRUE,col.names = colnames)
+print(routes)
+```
+
+##clean data
+
+ - airports  in route database, but not in airports database
+```{r}
+#unique sourceids not in airports$ID
+uniq.source.id<- unique(routes$SourceAirportID)
+uniq.source.id.x <- uniq.source.id[!(uniq.source.id  %in% airports$ID)]
+#unique destids not in airports$ID
+uniq.dest.id<- unique(routes$DestinationAirportID)
+uniq.dest.id.x <- uniq.dest.id[!(uniq.dest.id  %in% airports$ID)]
+#combine results and take out repeats
+uniq.ids.x <- unique(c(uniq.source.id.x,uniq.dest.id.x))
+#take out routes that have such "new" airports
+bool.source.x<-!(routes$SourceAirportID %in% uniq.source.id.x)
+bool.dest.x  <-!(routes$DestinationAirportID %in% uniq.dest.id.x)
+routes.filtered<- routes[bool.source.x & bool.dest.x]
+```
+
+##load graph
+
+ - parse into igraph  graph
+```{r}
+library(igraph)
+edgelist<-as.matrix(routes.filtered[,c(4,6)])
+#clean NA values
+edgelist<-subset(edgelist, (!is.na(edgelist[,1])) & (!is.na(edgelist[,2])))
+graph<-graph_from_edgelist(edgelist)
+```
+##simplify graph
+Count number of loops
+```{r}
+print(table(which_loop(graph)))
+```
+Count number of multiples
+```{r}
+table(which_multiple(graph))
+```
+simplify
+```{r}
+require(igraph)
+E(graph)$weight<-1
+simple.graph<-simplify(graph,edge.attr.comb = list(weight="sum"))
+#delete vertices without an edge
+simple.graph<-delete.vertices(simple.graph, degree(simple.graph)==0)
+#E(simple.graph)$weight <- 1/E(simple.graph)$weight
+```
+
+##basic exploration
+
+- how many edges do not have one coming back the the other way? Only because this is a directed graph
+```{r}
+reciprocity(graph)
+reciprocity(simple.graph)
+```
+- basic properties
+```{r}
+vcount(simple.graph)
+ecount(simple.graph)
+#with weights set to 1 or NA
+diameter(simple.graph,weights = NA)
+#diameter(simple.graph,weights = rep(1,ecount(simple.graph)))
+#with weights as they are
+diameter(simple.graph,weights = E(simple.graph)$weight)
+#with weights inverted
+diameter(simple.graph,weights = 1/E(simple.graph)$weight)
+#which airports are the farthest
+vertices.far<-farthest_vertices(simple.graph,weights = NA)$vertices
+airports$City[vertices.far]
+mean_distance(simple.graph, directed=TRUE, unconnected=TRUE)
+```
+Note that weight had to be set to 1, because in finding the longest minimal path between two nodes.   
+##degree distribution
+
+ - degree distribution
+```{r}
+graph.degree.in =degree(simple.graph,v = V(simple.graph),mode = c("in"))
+graph.degree.out=degree(simple.graph,v = V(simple.graph),mode = c("out"))
+graph.degree.all=degree(simple.graph,v = V(simple.graph),mode = c("all"))
+graph.degree.total=degree(simple.graph,v = V(simple.graph),mode = c("total"))
+require(reshape2)
+require(ggplot2)
+bucket_io<-list(incoming=graph.degree.in,outgoing=graph.degree.out)
+graph.degree.hist0<-ggplot(melt(bucket_io),aes(value,fill=L1))
+
+graph.degree.hist1<-graph.degree.hist0+geom_histogram(position ="dodge",binwidth=1,breaks=c(1:200))
+graph.degree.hist1
+
+
+graph.degree.hist2<-graph.degree.hist0+geom_histogram(position ="dodge",binwidth=1,breaks=c(1:20))
+graph.degree.hist2
+
+
+ggsave(filename="degree.io.png",plot = graph.degree.hist2)
+
+bucket_net<-list(all=graph.degree.in,total=graph.degree.out)
+graph.degree.hist3<-ggplot(melt(bucket_net),aes(value,fill=L1))+
+      geom_histogram(position ="dodge",binwidth=1,breaks=c(0:20)-0.5)
+graph.degree.hist3
+```
+
+```{r}
+graph.strength.total<-strength(simple.graph,mode="all")
+graph.strength.total<-graph.strength.total[which(graph.strength.total %%2 == 0)]/2
+
+require(reshape2)
+require(ggplot2)
+qplot.strength1<-qplot(graph.strength.total,geom = "bar",xlim=c(1,40))
+ggsave(filename="strength1.io.png",plot = graph.degree.hist2)
+
+graph.strengthinv.total<-strength(simple.graph,mode="all",weights = 1/E(simple.graph)$weights)
+#graph.strengthinv.total<-graph.strengthinv.total[which(graph.strength.total %%2 == 0)]/2
+qplot(graph.strengthinv.total,geom = "bar",xlim=c(1,40))
+
+qplot(degree(simple.graph,mode="out"),geom = "bar",xlim=c(1,40))
+```
+
+```{r}
+#add degree and strength as columns to V(simple.graph)
+V(simple.graph)$degree<-degree(simple.graph,mode = "all")
+V(simple.graph)$strength<-strength(simple.graph,mode = "all")
+
+```
+
+```{r}
+#find airports with degree above a certain limit
+v.degree.shortlist<-V(simple.graph)[V(simple.graph)$degree>200]
+sprintf("%s,%s,%s",airports$AirportName[v.degree.shortlist],airports$City[v.degree.shortlist],airports$Country[v.degree.shortlist])
+```
+
+```{r}
+#find airports with strength above a certain limit
+v.strength.shortlist<-V(simple.graph)[V(simple.graph)$strength>800]
+sprintf("%s,%s,%s",airports$AirportName[v.strength.shortlist],airports$City[v.strength.shortlist],airports$Country[v.strength.shortlist])
+```
+
+```{r}
+#pagerank
+graph.pagerank<-page_rank(simple.graph,weights = NA)
+v.pagerank.shortlist<-V(simple.graph)[graph.pagerank$vector>3e-3]
+sprintf("%15s,%10s,%10s,%8.10f",airports$AirportName[v.pagerank.shortlist],airports$City[v.pagerank.shortlist],airports$Country[v.pagerank.shortlist],graph.pagerank$vector[v.pagerank.shortlist])
+
+dat<- data.frame(AirportName = airports$AirportName[v.pagerank.shortlist], 
+           AirportCity = airports$City[v.pagerank.shortlist],
+           AirportCountry = airports$Country[v.pagerank.shortlist],
+           Pagerank = graph.pagerank$vector[v.pagerank.shortlist])
+write.csv(dat)
+```
+```{r}
+V(simple.graph)$label<-airports$City[V(simple.graph)]
+pagerank.subgraph<-induced_subgraph(simple.graph,vids = V(simple.graph)[v.pagerank.shortlist])
+wts<-E(pagerank.subgraph)$weight
+vertex.size<-4*sqrt(betweenness(pagerank.subgraph, directed = TRUE))
+layout.my<-layout_with_fr(pagerank.subgraph,weights = wts )
+
+plot(pagerank.subgraph,
+     vertex.size=vertex.size,vertex.label.cex=1.0,vertex.label.dist=0,vertex.label.degree=0,
+     vertex.label.color="black",
+     layout=layout.my,edge.width = 0.3*edge.betweenness(pagerank.subgraph)*wts,edge.arrow.size=0.1)
+```
+
+```{r}
+total.routes<- sum(E(simple.graph)$weight)
+important.routes<-sum(E(pagerank.subgraph)$weight)
+print(sprintf("we capture only %d of %d total routes in the subgraph, which is %f percentof the total",important.routes,total.routes,100*important.routes/total.routes))
+```
+
+
+
+
+```{md}
+![degree distribution]("degree.io.png")
+```
+##fit degree distribution to polynomial
+ - fit to log-log plot and linear fit
+```{r}
+all.degree<-as.data.frame((table(graph.degree.all)))
+colnames(all.degree)<-c("degree","counts")
+all.degree$degree <- as.integer(all.degree$degree)
+plot(all.degree$degree, all.degree$counts, log="xy", xlab = "degree", ylab="vertex counts")
+all.degree.linmodel1<-lm(log(degree) ~ log(counts),all.degree[1:15,])
+summary(all.degree.linmodel1)
+```
+
+$$ \begin{align} log(y) &= alog(x)+b \\ y &= x^a exp(b) \end{align} $$ 
+```{r}
+a = -0.2227
+b = 2.8092
+xvals <- seq(1,200,0.1)
+plot(all.degree$degree,all.degree$counts,log="xy",xlab = "degree",ylab="vertex counts")
+lines(xvals,xvals**a*exp(b),col='red')
+```
+
+##plot important nodes/hubs
+
+ - attach names to airport nodes
+```{r}
+V(simple.graph)$label<-airports$City[V(simple.graph)]
+```
+ - select subgraph with node that are the most important- with over 200 strength
+ ```{md}
+ ![hubs]("hubs.wan.png")
+ ```
+```{r}
+important_subgraph<-induced_subgraph(graph=simple.graph,
+                                     v=V(simple.graph)[strength(simple.graph,mode="all")>200])
+wts<-E(important_subgraph)$weight
+vertex.size<-4*sqrt(betweenness(important_subgraph, directed = TRUE))
+layout.my<-layout_with_fr(important_subgraph,weights = wts )
+png(filename = "important.subgraph.png",res = 200,height = 1500,width = 2000,bg =NA )
+graph.plot<-plot(important_subgraph,
+     vertex.size=vertex.size,vertex.label.cex=0.8,vertex.label.dist=0,vertex.label.degree=0,
+     vertex.label.color="white",
+     layout=layout.my,edge.width = 0.3*edge.betweenness(important_subgraph)*wts,edge.arrow.size=0.1)
+```
+```{r}
+dev.off()
+```
