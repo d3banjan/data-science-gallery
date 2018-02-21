@@ -1,6 +1,6 @@
 ---
 title: "Flight ADS-B Data Exploration"
-author: "Ankhi Choudhury"
+author: "Debanjan Basu"
 output:
   html_notebook: default
   html_document: default
@@ -23,7 +23,7 @@ output:
 A more technical description of  how the ADS-B standard encodes signals into 112 bits is given [here](http://adsb-decode-guide.readthedocs.io/en/latest/content/airborne-velocity.html).
 
 
-![map]("~/forAnkhi/RCode/flightsim/img/map.png")
+![map]("~/git-projects/data-science-gallery/RCode/flightsim/img/map.png")
 
 # Download data and load into R
 ## download
@@ -35,10 +35,10 @@ The [adsbexchange pageabout data](https://www.adsbexchange.com/data/) has the fo
 >This file is captured every 60 seconds, typically on the 30-second mark of any given minute. This generates 1,440 files daily, which then get zipped into a single archive per day.  The archive for the previous day is typically available by 0100Z (01:00 UTC) the following day. Data is available beginning on June 9, 2016. Daily files are currently in the neighborhood of 7.9 GB each. Transfer rates may be somewhat limited depending on the latency of your connection.
 
 ## load into R 
-The data was loaded into R using the following R code from ankhi- 
+The data was loaded into R using the following code- 
 ```{r}
 library(jsonlite)
-json_file <- (file="/home/debanjan/forAnkhi/extracted_data/2016-06-20-0000Z.json")
+json_file <- (file="/home/debanjan/raw_data/flightsim/extracted_data/2016-06-20-0000Z.json")
 json_data <- jsonlite::fromJSON(txt = json_file,simplifyDataFrame = TRUE)
 json_data<-json_data$acList
 ```
@@ -48,7 +48,7 @@ Obtained [recipe from stackoverflow](https://stackoverflow.com/questions/1495851
 ```{r}
 library(jsonlite)
 #create list of files
-files <- list.files(path="/home/debanjan/forAnkhi/extracted_data/",
+files <- list.files(path="/home/debanjan/raw_data/flightsim/extracted_data/",
                     pattern="*Z.json",
                     full.names=T,
                     recursive=FALSE)
@@ -425,21 +425,6 @@ colnames(airports)<-c("ID","AirportName","City","Country","IATA","ICAO","Latitud
 print(airports)
 ```
 
-
-```{r, eval=FALSE, include=FALSE}
-V(graph)$label<-airports$AirportName[V(graph)]
-```
-[histogram recipe from stackoverflow](https://stackoverflow.com/questions/20184096/how-to-plot-multiple-stacked-histograms-together-in-r) 
-#### select subgraph with node that are the most important- with over 300 connections
-```{r, eval=FALSE, include=FALSE}
-important_subgraph<-induced_subgraph(graph=graph,v=V(graph)[degree(graph,mode="all")>300])
-plot(important_subgraph,vertex.label.cex=0.9,layout=layout.reingold.tilford(important_subgraph,niter=10000),edge.arrow.size=0.15)
-```
-```{r}
-V(important_subgraph)$labels<-airports$AirportName[V(important_subgraph)]
-```
-#### Book about Network Analysis with R
-E.D. Kolaczyk and G. Csárdi, Statistical Analysis of Network Data with R
 
 
 
